@@ -1,0 +1,393 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lightw3ight Kubernetes Cluster"
+
+
+Parameters:
+  VPC:
+    Type: AWS::EC2::VPC::Id
+
+  MasterSubnet:
+    Type: AWS::EC2::Subnet::Id
+
+  MasterAZ:
+    Type: AWS::EC2::AvailabilityZone::Name
+
+  NodeSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  ClusterName:
+    Type: String
+
+  SSHKeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+
+
+Outputs:
+  ClusterDataVolume:
+    Value: !Ref KubeMasterDataVolume
+
+  ClusterAdminPasswordSSMPath:
+    Value: !Sub /lw/${ClusterName}/admin-passwd
+
+  ClusterCACertSSMPath:
+    Value: !Sub /lw/${ClusterName}/ca-cert
+
+  ClusterAPIEndpoint:
+    Value: !Sub "https://${KubeMasterIP}:6443"
+
+  InternalClusterAPIEndpoint:
+    Value: !Join
+      - ""
+      -
+        - "https://"
+        - !GetAtt KubeMasterNetworkInterface.PrimaryPrivateIpAddress
+        - ":6443"
+
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - VPC
+          - MasterSubnet
+          - MasterAZ
+          - NodeSubnets
+
+      - Label:
+          default: Cluster Configuration
+        Parameters:
+          - ClusterName
+          - SSHKeyPair
+
+
+Resources:
+  KubeMasterIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub lw.master.${ClusterName}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: !Sub "/lw/${ClusterName}/"
+      Policies:
+      - PolicyName: ec2
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - ec2:AttachNetworkInterface
+              - ec2:AttachVolume
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ssm:GetParameter
+              - ssm:PutParameter
+              - ssm:GetParametersByPath
+            Resource:
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${ClusterName}"
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${ClusterName}/*"
+
+  KubeMasterIamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/lw/${ClusterName}/"
+      Roles:
+        - !Ref KubeMasterIamRole
+
+  KubeMasterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Lightweight cluster master for ${ClusterName}
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub lw.master.${ClusterName}
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '6443'
+          ToPort: '6443'
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: '6443'
+          ToPort: '6443'
+          SourceSecurityGroupId: !Ref KubeNodesSecurityGroup
+
+  KubeNodesSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub Lightweight cluster nodes for ${ClusterName}
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub lw.nodes.${ClusterName}
+
+  KubeNodeFlannalAccessIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: '8472'
+      ToPort: '8472'
+      IpProtocol: udp
+      GroupId: !Ref KubeNodesSecurityGroup
+      SourceSecurityGroupId: !Ref KubeNodesSecurityGroup
+      Description: Flannel access node to node
+
+  KubeMasterIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: standard
+
+  KubeMasterNetworkInterface:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      Description: !Sub Network for Lightw3ight Cluster ${ClusterName}
+      GroupSet:
+        - !Ref KubeMasterSecurityGroup
+      SecondaryPrivateIpAddressCount: 0
+      SourceDestCheck: true
+      SubnetId: !Ref MasterSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub lw.master.${ClusterName}
+
+  BindKubeMasterNetworkToEIP:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt KubeMasterIP.AllocationId
+      NetworkInterfaceId: !Ref KubeMasterNetworkInterface
+
+  KubeMasterDataVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref MasterAZ
+      Encrypted: true
+      Size: 20
+      Tags:
+        - Key: Name
+          Value: !Sub lw.master.data.${ClusterName}
+      VolumeType: gp2
+
+  KubeMasterLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      IamInstanceProfile: !Ref KubeMasterIamInstanceProfile
+      ImageId: ami-065d66d47fcd4dfc2
+      InstanceMonitoring: false
+      InstanceType: "t3.large"
+      KeyName: !Ref SSHKeyPair
+      SecurityGroups:
+        - !Ref KubeMasterSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeSize: "20"
+            VolumeType: "gp2"
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+
+            set -e
+
+            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+            function cleanup {
+              last_exit=$?
+              /opt/aws/bin/cfn-signal \
+                --exit-code $last_exit \
+                --region ${AWS::Region} \
+                --resource KubeMasterInstanceAutoscalingGroup \
+                --stack ${AWS::StackName}
+            }
+
+            trap cleanup EXIT
+
+            export INSTANCE_ID="$(curl http://169.254.169.254/latest/meta-data/instance-id)"
+            export EIP_IP="${KubeMasterIP}"
+            export AWS_REGION="${AWS::Region}"
+
+            sleep 10
+
+            aws ec2 attach-volume \
+              --instance-id $INSTANCE_ID \
+              --volume-id ${KubeMasterDataVolume} \
+              --device /dev/xvdz \
+              --region $AWS_REGION
+
+            sleep 5
+
+            lsblk -f /dev/xvdz | grep ext4 || mkfs.ext4 /dev/xvdz
+
+            mkdir -p /var/lib/rancher/k3s
+            mount /dev/xvdz /var/lib/rancher/k3s
+
+            aws ec2 attach-network-interface \
+              --instance-id $INSTANCE_ID \
+              --network-interface-id ${KubeMasterNetworkInterface} \
+              --device-index 1 \
+              --region $AWS_REGION
+
+            export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
+            export INSTALL_K3S_BIN_DIR="/usr/bin"
+            export INSTALL_K3S_VERSION="v0.5.0"
+
+            curl -sfL https://get.k3s.io |  sh -
+            aws ssm put-parameter --name /lw/${ClusterName}/node-token \
+              --type SecureString \
+              --value "$(cat /var/lib/rancher/k3s/server/node-token)" \
+              --region $AWS_REGION \
+              --overwrite
+            aws ssm put-parameter --name /lw/${ClusterName}/admin-passwd \
+              --type SecureString \
+              --value "$(cat /var/lib/rancher/k3s/server/cred/passwd | grep admin | cut -d',' -f1)" \
+              --region $AWS_REGION \
+              --overwrite
+            aws ssm put-parameter --name /lw/${ClusterName}/ca-cert \
+              --type SecureString \
+              --value "$(cat /var/lib/rancher/k3s/server/tls/ca.crt | base64)" \
+              --region $AWS_REGION \
+              --overwrite
+
+
+          - PrivateIP: !GetAtt KubeMasterNetworkInterface.PrimaryPrivateIpAddress
+
+  KubeMasterInstanceAutoscalingGroup:
+    DependsOn: BindKubeMasterNetworkToEIP
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    CreationPolicy:
+      AutoScalingCreationPolicy:
+        MinSuccessfulInstancesPercent: 100
+      ResourceSignal:
+        Count: 1
+        Timeout: PT10M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 0
+        MaxBatchSize: '1'
+        WaitOnResourceSignals: true
+        PauseTime: PT10M
+    Properties:
+      AutoScalingGroupName: !Sub lw.master.${ClusterName}
+      DesiredCapacity: 1
+      MinSize: 1
+      MaxSize: 1
+      LaunchConfigurationName: !Ref KubeMasterLaunchConfiguration
+      Tags:
+        - Key: Name
+          Value: !Sub lw.master.${ClusterName}
+          PropagateAtLaunch: true
+        - Key: LightweightCluster
+          Value: true
+          PropagateAtLaunch: true
+        - Key: KubernetesCluster
+          Value: !Sub ${ClusterName}
+          PropagateAtLaunch: true
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: true
+          PropagateAtLaunch: true
+        - Key: !Sub kubernetes.io/master
+          Value: true
+          PropagateAtLaunch: true
+      TerminationPolicies:
+        - OldestInstance
+      VPCZoneIdentifier:
+        - !Ref MasterSubnet
+
+  KubeNodeLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      IamInstanceProfile: !Ref KubeMasterIamInstanceProfile
+      ImageId: ami-065d66d47fcd4dfc2
+      InstanceMonitoring: false
+      InstanceType: "t3.large"
+      KeyName: !Ref SSHKeyPair
+      SecurityGroups:
+        - !Ref KubeNodesSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: "/dev/xvda"
+          Ebs:
+            VolumeSize: "20"
+            VolumeType: "gp2"
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+
+            set -e
+
+            exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+            function cleanup {
+              last_exit=$?
+              /opt/aws/bin/cfn-signal \
+                --exit-code $last_exit \
+                --region ${AWS::Region} \
+                --resource KubeNodeInstanceAutoscalingGroup \
+                --stack ${AWS::StackName}
+            }
+
+            trap cleanup EXIT
+
+            export AWS_REGION="${AWS::Region}"
+
+            export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${ClusterName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
+            export INSTALL_K3S_BIN_DIR="/usr/bin"
+            export INSTALL_K3S_VERSION="v0.5.0"
+            export K3S_URL="https://${PrivateIP}:6443"
+
+            curl -sfL https://get.k3s.io |  sh -
+
+
+          - PrivateIP: !GetAtt KubeMasterNetworkInterface.PrimaryPrivateIpAddress
+
+  KubeNodeInstanceAutoscalingGroup:
+    DependsOn: KubeMasterInstanceAutoscalingGroup
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    CreationPolicy:
+      AutoScalingCreationPolicy:
+        MinSuccessfulInstancesPercent: 100
+      ResourceSignal:
+        Count: 3
+        Timeout: PT10M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 2
+        MaxBatchSize: '2'
+        WaitOnResourceSignals: true
+        PauseTime: PT10M
+    Properties:
+      AutoScalingGroupName: !Sub lw.nodes.${ClusterName}
+      DesiredCapacity: 3
+      MinSize: 1
+      MaxSize: 5
+      LaunchConfigurationName: !Ref KubeNodeLaunchConfiguration
+      Tags:
+        - Key: Name
+          Value: !Sub lw.node.${ClusterName}
+          PropagateAtLaunch: true
+        - Key: LightweightCluster
+          Value: true
+          PropagateAtLaunch: true
+        - Key: KubernetesCluster
+          Value: !Sub ${ClusterName}
+          PropagateAtLaunch: true
+        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+          Value: true
+          PropagateAtLaunch: true
+        - Key: !Sub kubernetes.io/node
+          Value: true
+          PropagateAtLaunch: true
+      TerminationPolicies:
+        - OldestInstance
+      VPCZoneIdentifier: !Ref NodeSubnets
