@@ -16,11 +16,12 @@ Parameters:
   NodeSubnets:
     Type: List<AWS::EC2::Subnet::Id>
 
-  ClusterName:
-    Type: String
-
   SSHKeyPair:
     Type: AWS::EC2::KeyPair::KeyName
+
+  AMIId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0c1d8842b9bfc767c
 
 
 Outputs:
@@ -28,10 +29,10 @@ Outputs:
     Value: !Ref KubeMasterDataVolume
 
   ClusterAdminPasswordSSMPath:
-    Value: !Sub /lw/${ClusterName}/admin-passwd
+    Value: !Sub /lw/${AWS::StackName}/admin-passwd
 
   ClusterCACertSSMPath:
-    Value: !Sub /lw/${ClusterName}/ca-cert
+    Value: !Sub /lw/${AWS::StackName}/ca-cert
 
   ClusterAPIEndpoint:
     Value: !Sub "https://${KubeMasterIP}:6443"
@@ -59,7 +60,6 @@ Metadata:
       - Label:
           default: Cluster Configuration
         Parameters:
-          - ClusterName
           - SSHKeyPair
 
 
@@ -67,7 +67,7 @@ Resources:
   KubeMasterIamRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub lw.master.${ClusterName}
+      RoleName: !Sub lw.master.${AWS::StackName}
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -77,7 +77,7 @@ Resources:
               - ec2.amazonaws.com
             Action:
               - sts:AssumeRole
-      Path: !Sub "/lw/${ClusterName}/"
+      Path: !Sub "/lw/${AWS::StackName}/"
       Policies:
       - PolicyName: ec2
         PolicyDocument:
@@ -94,24 +94,24 @@ Resources:
               - ssm:PutParameter
               - ssm:GetParametersByPath
             Resource:
-              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${ClusterName}"
-              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${ClusterName}/*"
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${AWS::StackName}"
+              - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${AWS::StackName}/*"
 
   KubeMasterIamInstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      Path: "/lw/${ClusterName}/"
+      Path: "/lw/${AWS::StackName}/"
       Roles:
         - !Ref KubeMasterIamRole
 
   KubeMasterSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub Lightweight cluster master for ${ClusterName}
+      GroupDescription: !Sub Lightweight cluster master for ${AWS::StackName}
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub lw.master.${ClusterName}
+          Value: !Sub lw.master.${AWS::StackName}
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: '6443'
@@ -125,11 +125,11 @@ Resources:
   KubeNodesSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub Lightweight cluster nodes for ${ClusterName}
+      GroupDescription: !Sub Lightweight cluster nodes for ${AWS::StackName}
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub lw.nodes.${ClusterName}
+          Value: !Sub lw.nodes.${AWS::StackName}
 
   KubeNodeFlannalAccessIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -149,7 +149,7 @@ Resources:
   KubeMasterNetworkInterface:
     Type: AWS::EC2::NetworkInterface
     Properties:
-      Description: !Sub Network for Lightw3ight Cluster ${ClusterName}
+      Description: !Sub Network for Lightw3ight Cluster ${AWS::StackName}
       GroupSet:
         - !Ref KubeMasterSecurityGroup
       SecondaryPrivateIpAddressCount: 0
@@ -157,7 +157,7 @@ Resources:
       SubnetId: !Ref MasterSubnet
       Tags:
         - Key: Name
-          Value: !Sub lw.master.${ClusterName}
+          Value: !Sub lw.master.${AWS::StackName}
 
   BindKubeMasterNetworkToEIP:
     Type: AWS::EC2::EIPAssociation
@@ -173,14 +173,15 @@ Resources:
       Size: 20
       Tags:
         - Key: Name
-          Value: !Sub lw.master.data.${ClusterName}
+          Value: !Sub lw.master.data.${AWS::StackName}
       VolumeType: gp2
 
   KubeMasterLaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
+      AssociatePublicIpAddress: true
       IamInstanceProfile: !Ref KubeMasterIamInstanceProfile
-      ImageId: ami-065d66d47fcd4dfc2
+      ImageId: !Ref AMIId
       InstanceMonitoring: false
       InstanceType: "t3.large"
       KeyName: !Ref SSHKeyPair
@@ -239,20 +240,20 @@ Resources:
 
             export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.5.0"
+            export INSTALL_K3S_VERSION="v0.6.1"
 
             curl -sfL https://get.k3s.io |  sh -
-            aws ssm put-parameter --name /lw/${ClusterName}/node-token \
+            aws ssm put-parameter --name /lw/${AWS::StackName}/node-token \
               --type SecureString \
               --value "$(cat /var/lib/rancher/k3s/server/node-token)" \
               --region $AWS_REGION \
               --overwrite
-            aws ssm put-parameter --name /lw/${ClusterName}/admin-passwd \
+            aws ssm put-parameter --name /lw/${AWS::StackName}/admin-passwd \
               --type SecureString \
               --value "$(cat /var/lib/rancher/k3s/server/cred/passwd | grep admin | cut -d',' -f1)" \
               --region $AWS_REGION \
               --overwrite
-            aws ssm put-parameter --name /lw/${ClusterName}/ca-cert \
+            aws ssm put-parameter --name /lw/${AWS::StackName}/ca-cert \
               --type SecureString \
               --value "$(cat /var/lib/rancher/k3s/server/tls/ca.crt | base64)" \
               --region $AWS_REGION \
@@ -277,22 +278,22 @@ Resources:
         WaitOnResourceSignals: true
         PauseTime: PT10M
     Properties:
-      AutoScalingGroupName: !Sub lw.master.${ClusterName}
+      AutoScalingGroupName: !Sub lw.master.${AWS::StackName}
       DesiredCapacity: 1
       MinSize: 1
       MaxSize: 1
       LaunchConfigurationName: !Ref KubeMasterLaunchConfiguration
       Tags:
         - Key: Name
-          Value: !Sub lw.master.${ClusterName}
+          Value: !Sub lw.master.${AWS::StackName}
           PropagateAtLaunch: true
         - Key: LightweightCluster
           Value: true
           PropagateAtLaunch: true
         - Key: KubernetesCluster
-          Value: !Sub ${ClusterName}
+          Value: !Sub ${AWS::StackName}
           PropagateAtLaunch: true
-        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        - Key: !Sub kubernetes.io/cluster/${AWS::StackName}
           Value: true
           PropagateAtLaunch: true
         - Key: !Sub kubernetes.io/master
@@ -306,9 +307,9 @@ Resources:
   KubeNodeLaunchConfiguration:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
+      AssociatePublicIpAddress: true
       IamInstanceProfile: !Ref KubeMasterIamInstanceProfile
-      ImageId: ami-065d66d47fcd4dfc2
-      InstanceMonitoring: false
+      ImageId: !Ref AMIId
       InstanceType: "t3.large"
       KeyName: !Ref SSHKeyPair
       SecurityGroups:
@@ -341,9 +342,9 @@ Resources:
 
             export AWS_REGION="${AWS::Region}"
 
-            export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${ClusterName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
+            export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${AWS::StackName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.5.0"
+            export INSTALL_K3S_VERSION="v0.6.1"
             export K3S_URL="https://${PrivateIP}:6443"
 
             curl -sfL https://get.k3s.io |  sh -
@@ -367,22 +368,22 @@ Resources:
         WaitOnResourceSignals: true
         PauseTime: PT10M
     Properties:
-      AutoScalingGroupName: !Sub lw.nodes.${ClusterName}
+      AutoScalingGroupName: !Sub lw.nodes.${AWS::StackName}
       DesiredCapacity: 3
       MinSize: 1
       MaxSize: 5
       LaunchConfigurationName: !Ref KubeNodeLaunchConfiguration
       Tags:
         - Key: Name
-          Value: !Sub lw.node.${ClusterName}
+          Value: !Sub lw.node.${AWS::StackName}
           PropagateAtLaunch: true
         - Key: LightweightCluster
           Value: true
           PropagateAtLaunch: true
         - Key: KubernetesCluster
-          Value: !Sub ${ClusterName}
+          Value: !Sub ${AWS::StackName}
           PropagateAtLaunch: true
-        - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        - Key: !Sub kubernetes.io/cluster/${AWS::StackName}
           Value: true
           PropagateAtLaunch: true
         - Key: !Sub kubernetes.io/node

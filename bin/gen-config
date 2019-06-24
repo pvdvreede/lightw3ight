@@ -4,7 +4,13 @@ set -e
 
 CLUSTER=$1
 
-server=$(aws cloudformation describe-stacks --stack-name lw-$CLUSTER --query "Stacks[0].Outputs[?OutputKey=='ClusterAPIEndpoint'].OutputValue" --output text)
+server=$(aws cloudformation describe-stacks --stack-name $CLUSTER --query "Stacks[0].Outputs[?OutputKey=='ClusterAPIEndpoint'].OutputValue" --output text)
+
+if [[ "$server" == "None" ]]; then
+  echo API server IP address not set, perhaps the Cloudformation is still creating?
+  exit 1
+fi
+
 pass=$(aws ssm get-parameter --name /lw/$CLUSTER/admin-passwd --with-decryption --query 'Parameter.Value' --output text)
 ca=$(aws ssm get-parameter --name /lw/$CLUSTER/ca-cert --with-decryption --query 'Parameter.Value' --output text)
 
