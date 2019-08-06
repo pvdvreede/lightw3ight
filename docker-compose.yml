@@ -1,0 +1,19 @@
+---
+version: '3.4'
+
+services:
+  cdk: &cdk
+    build: .
+    volumes:
+      - ".:/app"
+      - "$HOME/.aws:/root/.aws"
+    entrypoint:
+      - cdk
+    environment:
+      AWS_REGION: ap-southeast-2
+      AWS_DEFAULT_REGION: ap-southeast-2
+
+  sh:
+    <<: *cdk
+    entrypoint:
+      - sh

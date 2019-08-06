@@ -23,6 +23,10 @@ Parameters:
     Type: AWS::EC2::Image::Id
     Default: ami-0c1d8842b9bfc767c
 
+  NodeCount:
+    Type: Number
+    Default: 3
+
 
 Outputs:
   ClusterDataVolume:
@@ -78,6 +82,8 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: !Sub "/lw/${AWS::StackName}/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
       Policies:
       - PolicyName: ec2
         PolicyDocument:
@@ -96,6 +102,43 @@ Resources:
             Resource:
               - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${AWS::StackName}"
               - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/lw/${AWS::StackName}/*"
+      - PolicyName: ebs-csi
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+              - "ec2:AttachVolume"
+              - "ec2:CreateSnapshot"
+              - "ec2:CreateTags"
+              - "ec2:CreateVolume"
+              - "ec2:DeleteSnapshot"
+              - "ec2:DeleteTags"
+              - "ec2:DeleteVolume"
+              - "ec2:DescribeInstances"
+              - "ec2:DescribeSnapshots"
+              - "ec2:DescribeTags"
+              - "ec2:DescribeVolumes"
+              - "ec2:DetachVolume"
+            Resource: "*"
+
+  # IngressLoadBalancer:
+  #   Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+  #   Properties:
+  #     IpAddressType: ipv4
+  #     LoadBalancerAttributes:
+  #       - LoadBalancerAttribute
+  #     Name: !Sub "lw.ingress.${AWS::StackName}"
+  #     Scheme: internet-facing
+  #     SecurityGroups:
+  #       - String
+  #     SubnetMappings:
+  #       - SubnetMapping
+  #     Subnets:
+  #       - String
+  #     Tags:
+  #       - Tag
+  #     Type: network
 
   KubeMasterIamInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -239,6 +282,7 @@ Resources:
               --region $AWS_REGION
 
             export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
+            export INSTALL_K3S_EXEC="$INSTALL_K3S_EXEC --kube-apiserver-arg=feature-gates=CSINodeInfo=true,CSIDriverRegistry=true,CSIBlockVolume=true --kube-apiserver-arg=allow-privileged=true"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
             export INSTALL_K3S_VERSION="v0.6.1"
 
@@ -340,11 +384,14 @@ Resources:
 
             trap cleanup EXIT
 
+            mkdir -p /var/lib/kubelet/plugins_registry/
+
             export AWS_REGION="${AWS::Region}"
 
             export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${AWS::StackName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
             export INSTALL_K3S_VERSION="v0.6.1"
+            export INSTALL_K3S_EXEC="--kubelet-arg=feature-gates=CSINodeInfo=true,CSIDriverRegistry=true,CSIBlockVolume=true --kubelet-arg=allow-privileged=true"
             export K3S_URL="https://${PrivateIP}:6443"
 
             curl -sfL https://get.k3s.io |  sh -
@@ -359,7 +406,7 @@ Resources:
       AutoScalingCreationPolicy:
         MinSuccessfulInstancesPercent: 100
       ResourceSignal:
-        Count: 3
+        Count: !Ref NodeCount
         Timeout: PT10M
     UpdatePolicy:
       AutoScalingRollingUpdate:
@@ -369,9 +416,9 @@ Resources:
         PauseTime: PT10M
     Properties:
       AutoScalingGroupName: !Sub lw.nodes.${AWS::StackName}
-      DesiredCapacity: 3
+      DesiredCapacity: !Ref NodeCount
       MinSize: 1
-      MaxSize: 5
+      MaxSize: !Ref NodeCount
       LaunchConfigurationName: !Ref KubeNodeLaunchConfiguration
       Tags:
         - Key: Name

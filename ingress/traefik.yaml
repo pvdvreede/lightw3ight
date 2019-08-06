@@ -1,0 +1,15 @@
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  chart: stable/traefik
+  set:
+    rbac.enabled: "true"
+    ssl.enabled: "true"
+    ssl.enforced: "true"
+    serviceType: "NodePort"
+    service.nodePorts.http: "32255"
+    service.nodePorts.https: "32256"
