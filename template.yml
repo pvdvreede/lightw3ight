@@ -23,6 +23,10 @@ Parameters:
     Type: AWS::EC2::Image::Id
     Default: ami-0c1d8842b9bfc767c
 
+  APIAccessCIDR:
+    Type: String
+    Default: "0.0.0.0/0"
+
 
 Outputs:
   ClusterDataVolume:
@@ -52,6 +56,7 @@ Metadata:
       - Label:
           default: Network Configuration
         Parameters:
+          - APIAccessCIDR
           - VPC
           - MasterSubnet
           - MasterAZ
@@ -116,7 +121,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: '6443'
           ToPort: '6443'
-          CidrIp: "0.0.0.0/0"
+          CidrIp: !Ref APIAccessCIDR
         - IpProtocol: tcp
           FromPort: '6443'
           ToPort: '6443'
