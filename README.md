@@ -14,7 +14,6 @@ k3s.io has a list of possible purposes on its website [here](https://github.com/
 
 ## TODO
 
-* Add template parameter to better lock down API to a CIDR of choice rather than the whole world, again for _Security_.
 * Implement optional DLM lifecycle for the EBS volume to automate backups, then add optional snapshot ID to template so that a cluster can be restored/duplicated easily.
 * Re-add Traefik and setup with NLB to add a built in ingress that is ready to go as part of Lightw3ight.
 * Upload template to S3 so that the Cloudformation Web UI can be used to create clusters easily without needing to setup tools or clone this repo.
