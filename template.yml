@@ -243,11 +243,11 @@ Resources:
               --device-index 1 \
               --region $AWS_REGION
 
-            export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
+            export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik,servicelb"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.6.1"
+            export INSTALL_K3S_VERSION="v0.8.0"
 
-            curl -sfL https://get.k3s.io |  sh -
+            curl -sfL https://get.k3s.io | sh -
             aws ssm put-parameter --name /lw/${AWS::StackName}/node-token \
               --type SecureString \
               --value "$(cat /var/lib/rancher/k3s/server/node-token)" \
@@ -260,7 +260,7 @@ Resources:
               --overwrite
             aws ssm put-parameter --name /lw/${AWS::StackName}/ca-cert \
               --type SecureString \
-              --value "$(cat /var/lib/rancher/k3s/server/tls/ca.crt | base64)" \
+              --value "$(cat /var/lib/rancher/k3s/server/tls/server-ca.crt | base64)" \
               --region $AWS_REGION \
               --overwrite
 
@@ -349,7 +349,7 @@ Resources:
 
             export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${AWS::StackName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.6.1"
+            export INSTALL_K3S_VERSION="v0.8.0"
             export K3S_URL="https://${PrivateIP}:6443"
 
             curl -sfL https://get.k3s.io |  sh -
