@@ -243,7 +243,7 @@ Resources:
               --device-index 1 \
               --region $AWS_REGION
 
-            export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik,servicelb"
+            export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
             export INSTALL_K3S_VERSION="v0.8.0"
 
