@@ -14,7 +14,8 @@ fi
 pass=$(aws ssm get-parameter --name /lw/$CLUSTER/admin-passwd --with-decryption --query 'Parameter.Value' --output text)
 ca=$(aws ssm get-parameter --name /lw/$CLUSTER/ca-cert --with-decryption --query 'Parameter.Value' --output text)
 
-kubectl config set-cluster $CLUSTER --server=$server --insecure-skip-tls-verify
+kubectl config set-cluster $CLUSTER --server=$server
+kubectl config set clusters.$CLUSTER.certificate-authority-data "$ca"
 kubectl config set-credentials $CLUSTER-admin --username admin --password "$pass"
 kubectl config set-context $CLUSTER --cluster=$CLUSTER --user=$CLUSTER-admin --namespace=kube-system
 kubectl config use-context $CLUSTER
