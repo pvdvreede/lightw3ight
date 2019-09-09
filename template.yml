@@ -245,7 +245,7 @@ Resources:
 
             export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.8.0"
+            export INSTALL_K3S_VERSION="v0.8.1"
 
             curl -sfL https://get.k3s.io | sh -
             aws ssm put-parameter --name /lw/${AWS::StackName}/node-token \
@@ -349,7 +349,7 @@ Resources:
 
             export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${AWS::StackName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.8.0"
+            export INSTALL_K3S_VERSION="v0.8.1"
             export K3S_URL="https://${PrivateIP}:6443"
 
             curl -sfL https://get.k3s.io |  sh -
