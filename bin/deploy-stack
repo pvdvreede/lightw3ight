@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# This script will quickly deploy a stack into the default VPC and subnets and
+# put the Master in the A az. It is a means of getting a stack up quickly without
+# worring about all the parameters.
+
+set -e
+
+if [[ "$#" != "2" ]]; then
+  echo "Usage: ./<script> <stack-name> <ec2-ssh-key-name>"
+  exit 255
+fi
+
+vpc=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query Vpcs[\*].VpcId --output text)
+subnets=$(aws ec2 describe-subnets --filters Name=default-for-az,Values=true --query Subnets[\*].SubnetId --output text | sed -e 's/\s/,/g')
+masterSubnet=$(echo $subnets | cut -d',' -f1)
+
+aws cloudformation deploy --template-file ./template.yml --stack-name "$1" \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides VPC=$vpc MasterSubnet=$masterSubnet MasterAZ=ap-southeast-2a NodeSubnets=$subnets SSHKeyPair=$2 \
+  --tags "Lightw3ight=True" "k3sCluster=True"
