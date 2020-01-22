@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -e
+
+if [[ "$#" != "1" ]]; then
+  echo "Usage: ./<script> <stack-name>"
+  exit 255
+fi
+
+aws cloudformation delete-stack --stack-name $1 || true
+
+echo "Waiting for stack $1 to finish deleting..."
+aws cloudformation wait stack-delete-complete --stack-name $1 || true
+
+aws ssm delete-parameters --names "/lw/$1/node-token" "/lw/$1/ca-cert" "/lw/$1/admin-passwd" || true
