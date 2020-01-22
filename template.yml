@@ -146,6 +146,16 @@ Resources:
       SourceSecurityGroupId: !Ref KubeNodesSecurityGroup
       Description: Flannel access node to node
 
+  KubeNodeKubeletMetricAccess:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: '10250'
+      ToPort: '10250'
+      IpProtocol: tcp
+      GroupId: !Ref KubeNodesSecurityGroup
+      SourceSecurityGroupId: !Ref KubeNodesSecurityGroup
+      Description: Kubelet metrics access node to node
+
   KubeMasterIP:
     Type: AWS::EC2::EIP
     Properties:
@@ -245,7 +255,7 @@ Resources:
 
             export INSTALL_K3S_EXEC="--disable-agent --tls-san=$EIP_IP --tls-san=${PrivateIP} --no-deploy=traefik --no-deploy=servicelb"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.9.1"
+            export INSTALL_K3S_VERSION="v1.17.0+k3s.1"
 
             curl -sfL https://get.k3s.io | sh -
             aws ssm put-parameter --name /lw/${AWS::StackName}/node-token \
@@ -346,10 +356,12 @@ Resources:
             trap cleanup EXIT
 
             export AWS_REGION="${AWS::Region}"
+            export EXTERNAL_IP=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
 
             export K3S_TOKEN="$(aws ssm get-parameter --name /lw/${AWS::StackName}/node-token --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION)"
             export INSTALL_K3S_BIN_DIR="/usr/bin"
-            export INSTALL_K3S_VERSION="v0.9.1"
+            export INSTALL_K3S_VERSION="v1.17.0+k3s.1"
+            export INSTALL_K3S_EXEC="--node-external-ip=$EXTERNAL_IP"
             export K3S_URL="https://${PrivateIP}:6443"
 
             curl -sfL https://get.k3s.io |  sh -
